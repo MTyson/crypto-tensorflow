@@ -1,0 +1,63 @@
+const tf = require('@tensorflow/tfjs');
+
+async function trainAndPredict(timeAndPriceData, toPredict) {
+//	console.log("toPredict: " + JSON.stringify(toPredict));
+  // Extract timestamps and prices from the data
+  const timestamps = timeAndPriceData.map(([timestamp, price]) => timestamp);
+  const prices = timeAndPriceData.map(([timestamp, price]) => price);
+
+  // include forecast times and prices in normalization
+  const predictionTimestamps = toPredict.map(({timestamp}) => timestamp);
+  const predictionPrices = toPredict.map(({actual}) => actual);
+
+  // Normalize and scale the data
+  const minTimestamp = Math.min(...timestamps, ...predictionTimestamps);
+  const maxTimestamp = Math.max(...timestamps, ...predictionTimestamps);
+  const minPrice = Math.min(...prices, ...predictionPrices);
+  const maxPrice = Math.max(...prices, ...predictionPrices);
+
+  const normalizedTimestamps = timestamps.map(ts => (ts - minTimestamp) / (maxTimestamp - minTimestamp));
+  const normalizedPrices = prices.map(price => (price - minPrice) / (maxPrice - minPrice));
+
+  toPredict.forEach((p) => { p.normalizedTimestamp = (p.timestamp - minTimestamp) / (maxTimestamp - minTimestamp)});
+
+  // Create sequences of the last 7 normalized prices as input features
+  const sequenceLength = 7;
+  const sequences = [];
+  for (let i = sequenceLength; i < normalizedPrices.length - 24; i++) {
+    const sequence = normalizedPrices.slice(i - sequenceLength, i);
+    sequences.push(sequence);
+  }
+
+//  const X = tf.tensor2d(, [sequences.length, sequenceLength]);
+  const X = tf.tensor1d(normalizedTimestamps);
+  const y = tf.tensor1d(normalizedPrices);
+//  const y = tf.tensor1d(normalizedPrices.slice(sequenceLength));
+
+  // Create a simple neural network model
+  const model = tf.sequential();
+  //model.add(tf.layers.dense({ units: 16, inputShape: [sequenceLength], activation: 'relu' }));
+  model.add(tf.layers.dense({ units: 16, inputShape: [1], activation: 'relu' }));
+  model.add(tf.layers.dense({ units: 1 }));
+
+  // Compile the model
+  model.compile({ optimizer: 'sgd', loss: 'meanSquaredError' });
+
+  // Train the model
+  await model.fit(X, y, { epochs: 100 });
+
+  // Normalize the new timestamp for prediction
+//  const normalizedNewTimestamp = (newTimestamp - minTimestamp) / (maxTimestamp - minTimestamp);
+  // Create a sequence of the last 7 normalized prices for prediction
+//  const last7NormalizedPrices = normalizedPrices.slice(-sequenceLength);
+
+  const normalizedPredictedPrices = model.predict(toPredict.map(obj => obj.normalizedTimestamp));
+
+  const denormalizedPredictedPrices = normalizedPredictedPrices.mul(maxPrice - minPrice).add(minPrice);
+  const predictedPrices = denormalizedPredictedPrices.dataSync();
+
+  return predictedPrices;
+}
+
+module.exports = trainAndPredict;
+

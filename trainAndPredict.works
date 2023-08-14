@@ -1,0 +1,55 @@
+const tf = require('@tensorflow/tfjs');
+
+async function trainAndPredict(timeAndPriceData, newTimestamp) {
+  // Extract timestamps and prices from the data
+  const timestamps = timeAndPriceData.map(([timestamp, price]) => timestamp);
+  const prices = timeAndPriceData.map(([timestamp, price]) => price);
+
+  // Normalize and scale the data
+  const minTimestamp = Math.min(...timestamps);
+  const maxTimestamp = Math.max(...timestamps);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+
+  const normalizedTimestamps = timestamps.map(ts => (ts - minTimestamp) / (maxTimestamp - minTimestamp));
+  const normalizedPrices = prices.map(price => (price - minPrice) / (maxPrice - minPrice));
+
+  // Create sequences of the last 7 normalized prices as input features
+  const sequenceLength = 7;
+  const sequences = [];
+  for (let i = sequenceLength; i < normalizedPrices.length; i++) {
+    sequences.push(normalizedPrices.slice(i - sequenceLength, i));
+  }
+
+  // Convert data to TensorFlow tensors
+  const X = tf.tensor2d(sequences, [sequences.length, sequenceLength]);
+  const y = tf.tensor1d(normalizedPrices.slice(sequenceLength));
+
+  // Create a simple neural network model
+  const model = tf.sequential();
+  model.add(tf.layers.dense({ units: 16, inputShape: [sequenceLength], activation: 'relu' }));
+  model.add(tf.layers.dense({ units: 1 }));
+
+  // Compile the model
+  model.compile({ optimizer: 'sgd', loss: 'meanSquaredError' });
+
+  // Train the model
+  await model.fit(X, y, { epochs: 100 });
+
+  // Normalize the new timestamp for prediction
+  const normalizedNewTimestamp = (newTimestamp - minTimestamp) / (maxTimestamp - minTimestamp);
+
+  // Create a sequence of the last 7 normalized prices for prediction
+  const last7NormalizedPrices = normalizedPrices.slice(-sequenceLength);
+
+  // Predict the normalized price for the new timestamp using the last 7 prices
+  const normalizedPredictedPrice = model.predict(tf.tensor2d([last7NormalizedPrices], [1, sequenceLength]));
+
+  // Scale the predicted price back to the original range
+  const predictedPrice = normalizedPredictedPrice.mul(maxPrice - minPrice).add(minPrice);
+
+  return predictedPrice.dataSync()[0];
+}
+
+module.exports = trainAndPredict;
+
